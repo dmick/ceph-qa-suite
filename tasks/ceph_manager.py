@@ -30,7 +30,8 @@ def write_conf(ctx, conf_path=DEFAULT_CONF_PATH):
             'sudo', 'chmod', '0755', '/etc/ceph', run.Raw('&&'),
             'sudo', 'python',
             '-c',
-            'import shutil, sys; shutil.copyfileobj(sys.stdin, file(sys.argv[1], "wb"))',
+            ('import shutil, sys; '
+             'shutil.copyfileobj(sys.stdin, file(sys.argv[1], "wb"))'),
             conf_path,
             run.Raw('&&'),
             'sudo', 'chmod', '0644', conf_path,
@@ -592,6 +593,7 @@ class Thrasher:
             self.choose_action()()
             time.sleep(delay)
         self.all_up()
+
 
 class CephManager:
     """
