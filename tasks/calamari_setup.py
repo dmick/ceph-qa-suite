@@ -249,8 +249,16 @@ def calamari_install(config, cal_svr):
     ice_in = StringIO(icesetdata)
     ret = cal_svr.run(args=['sudo', 'calamari-ctl', 'initialize'],
                       stdin=ice_in, stdout=ice_setup_io)
-    log.debug(ice_setup_io.getvalue())
+    outstr = ice_setup_io.getvalue()
+    log.debug(outstr)
     if ret.exitstatus:
+        if 'We are sorry' in outstr:
+            _, errpath, _ = outstr.split("'")
+            with open(errpath, 'r+') as errfile:
+                errinfo = json.loads(errfile.read())
+            log.error('calamari-ctl initialize')
+            log.info('error info:')
+            log.info(errinfo)
         raise RuntimeError('calamari-ctl initialize failed')
     try:
         yield
