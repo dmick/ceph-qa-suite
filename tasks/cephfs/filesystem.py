@@ -151,6 +151,21 @@ class Filesystem(object):
 
         return True
 
+    def get_active_names(self):
+        """
+        Return MDS daemon names of those daemons holding ranks
+        in state up:active
+
+        :return: list of strings like ['a', 'b'], sorted by rank
+        """
+        status = self.mon_manager.get_mds_status_all()
+        result = []
+        for mds_status in sorted(status['info'].values(), lambda a, b: cmp(a['rank'], b['rank'])):
+            if mds_status['state'] == 'up:active':
+                result.append(mds_status['name'])
+
+        return result
+
     def wait_for_daemons(self, timeout=None):
         """
         Wait until all daemons are healthy
@@ -369,8 +384,8 @@ class Filesystem(object):
             elif timeout is not None and elapsed > timeout:
                 raise RuntimeError(
                     "Reached timeout after {0} seconds waiting for state {1}, while in state {2}".format(
-                    elapsed, goal_state, current_state
-                ))
+                        elapsed, goal_state, current_state
+                    ))
             else:
                 time.sleep(1)
                 elapsed += 1
@@ -420,6 +435,27 @@ class Filesystem(object):
 
         return json.loads(p.stdout.getvalue().strip())
 
+    def rados(self, args, pool=None):
+        """
+        Call into the `rados` CLI from an MDS
+        """
+
+        if pool is None:
+            pool = self.get_metadata_pool_name()
+
+        # Doesn't matter which MDS we use to run rados commands, they all
+        # have access to the pools
+        mds_id = self.mds_ids[0]
+        remote = self.mds_daemons[mds_id].remote
+
+        # NB we could alternatively use librados pybindings for this, but it's a one-liner
+        # using the `rados` CLI
+        args = ["rados", "-p", pool] + args
+        p = remote.run(
+            args=args,
+            stdout=StringIO())
+        return p.stdout.getvalue().strip()
+
     def list_dirfrag(self, dir_ino):
         """
         Read the named object and return the list of omap keys
@@ -429,32 +465,57 @@ class Filesystem(object):
 
         dirfrag_obj_name = "{0:x}.00000000".format(dir_ino)
 
-        # Doesn't matter which MDS we use to run rados commands, they all
-        # have access to the pools
-        mds_id = self.mds_ids[0]
-        remote = self.mds_daemons[mds_id].remote
-
-        # NB we could alternatively use librados pybindings for this, but it's a one-liner
-        # using the `rados` CLI
-        args = ["rados", "-p", self.get_metadata_pool_name(), "listomapkeys", dirfrag_obj_name]
         try:
-            p = remote.run(
-                args=args,
-                stdout=StringIO())
+            key_list_str = self.rados(["listomapkeys", dirfrag_obj_name])
         except CommandFailedError as e:
             log.error(e.__str__())
             raise ObjectNotFound(dirfrag_obj_name)
 
-        key_list_str = p.stdout.getvalue().strip()
         return key_list_str.split("\n") if key_list_str else []
 
-    def journal_tool(self, args):
+    def erase_metadata_objects(self, prefix):
         """
-        Invoke cephfs-journal-tool with the passed arguments, and return its stdout
+        For all objects in the metadata pool matching the prefix,
+        erase them.
+
+        This O(N) with the number of objects in the pool, so only suitable
+        for use on toy test filesystems.
         """
+        all_objects = self.rados(["ls"]).split("\n")
+        matching_objects = [o for o in all_objects if o.startswith(prefix)]
+        for o in matching_objects:
+            self.rados(["rm", o])
+
+    def erase_mds_objects(self, rank):
+        """
+        Erase all the per-MDS objects for a particular rank.  This includes
+        inotable, sessiontable, journal
+        """
+        self.erase_metadata_objects("20{rank}.".format(rank=rank))
+        self.erase_metadata_objects("30{rank}.".format(rank=rank))
+        self.erase_metadata_objects("40{rank}.".format(rank=rank))
+        self.erase_metadata_objects("mds{rank}_".format(rank=rank))
+
+    def _run_tool(self, tool, args, rank=None):
         mds_id = self.mds_ids[0]
         remote = self.mds_daemons[mds_id].remote
 
+        base_args = [tool, '--debug-mds=10']
+        if rank is not None:
+            base_args.extend(["--rank", "%d" % rank])
+
         return remote.run(
-            args=['cephfs-journal-tool'] + args,
+            args=base_args + args,
             stdout=StringIO()).stdout.getvalue().strip()
+
+    def journal_tool(self, args, rank=None):
+        """
+        Invoke cephfs-journal-tool with the passed arguments, and return its stdout
+        """
+        return self._run_tool("cephfs-journal-tool", args, rank)
+
+    def table_tool(self, args, rank=None):
+        """
+        Invoke cephfs-table-tool with the passed arguments, and return its stdout
+        """
+        return self._run_tool("cephfs-table-tool", args, rank)
