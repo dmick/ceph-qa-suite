@@ -180,13 +180,13 @@ class Thrasher:
                           "--data-path {fpath} --journal-path {jpath} "
                           "--type keyvaluestore-dev "
                           "--log-file="
-                          "/var/log/ceph/objectstore_tool.\\$pid.log".
+                          "/var/log/ceph/objectstore_tool.\\$pid.log ".
                           format(fpath=FSPATH, jpath=JPATH))
             else:
                 prefix = ("sudo ceph-objectstore-tool "
                           "--data-path {fpath} --journal-path {jpath} "
                           "--log-file="
-                          "/var/log/ceph/objectstore_tool.\\$pid.log".
+                          "/var/log/ceph/objectstore_tool.\\$pid.log ".
                           format(fpath=FSPATH, jpath=JPATH))
             cmd = (prefix + "--op list-pgs").format(id=exp_osd)
             proc = exp_remote.run(args=cmd, wait=True,
